@@ -1,48 +1,66 @@
 using Microsoft.Data.Sqlite;
-using System.Diagnostics;
+using Dapper;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Services
-builder.Services.AddSingleton<StateService>();
-builder.Services.AddSingleton<ScanService>();
+// Read scan path from config / Docker env
+var scanPath = builder.Configuration.GetValue<string>("ScanDirectory");
+if (string.IsNullOrWhiteSpace(scanPath) || !Directory.Exists(scanPath))
+{
+    throw new Exception($"Configured scan path does not exist: {scanPath}. Fix the Docker volume mapping.");
+}
+
+// Create services
+builder.Services.AddSingleton<ScanState>();
+builder.Services.AddSingleton(new ScanService(scanPath));
 
 var app = builder.Build();
 
-// Serve Web UI
+// Serve static UI files
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
 // ---------- ENDPOINTS ----------
-app.MapGet("/", () => "Media Integrity Checker Online");
 
-// Start scan
-app.MapPost("/scan/start", async (StateService state, ScanService scan) =>
+// START SCAN
+app.MapPost("/scan/start", (ScanService scanner, ScanState state) =>
 {
-    if (state.Running) return Results.BadRequest("Scan already running.");
-    state.Running = true;
-    _ = Task.Run(() => scan.RunScan(state)); // fire and forget
-    return Results.Ok("Started");
+    if (state.IsRunning) return Results.BadRequest("Scan already running.");
+
+    // Create new log for this run
+    state.LogFile = $"logs/Run_{DateTime.Now:yyyyMMdd_HHmmss}.log";
+    Directory.CreateDirectory("logs");
+    File.WriteAllText(state.LogFile, $"=== SCAN STARTED {DateTime.Now} ===\n");
+
+    state.IsRunning = true;
+    state.TokenSource = new CancellationTokenSource();
+
+    _ = Task.Run(() => scanner.RunChecksumScan(state.TokenSource.Token, state.LogFile));
+
+    return Results.Ok("Scan started");
 });
 
-// Stop scan
-app.MapPost("/scan/stop", (StateService state) =>
+// STOP SCAN
+app.MapPost("/scan/stop", (ScanState state) =>
 {
-    state.Running = false;
-    return Results.Ok("Stopping...");
+    if (!state.IsRunning) return Results.BadRequest("No scan running.");
+    state.TokenSource.Cancel();
+    state.IsRunning = false;
+    File.AppendAllText(state.LogFile, "\n=== SCAN STOPPED ===\n");
+    return Results.Ok("Scan stopping...");
 });
 
-// Get current state
-app.MapGet("/state", (StateService state) =>
+// STATE for UI
+app.MapGet("/state", (ScanState state) =>
 {
-    return Results.Json(new { running = state.Running });
+    return Results.Json(new { running = state.IsRunning, logfile = state.LogFile });
 });
 
-// Return log for active run
-app.MapGet("/log", (StateService state) =>
+// READ LOG
+app.MapGet("/log", (ScanState state) =>
 {
-    if (state.ActiveLogFile is null) return Results.Ok("");
-    return Results.Text(File.ReadAllText(state.ActiveLogFile));
+    if (state.LogFile == null || !File.Exists(state.LogFile)) return Results.Ok("");
+    return Results.Text(File.ReadAllText(state.LogFile));
 });
 
 app.Run();

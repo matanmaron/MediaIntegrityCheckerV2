@@ -1,36 +1,40 @@
 using Microsoft.Data.Sqlite;
-using System.Security.Cryptography;
 using Dapper;
+using System.Security.Cryptography;
 
 public class ScanService
 {
-    private readonly string dbPath = "Data/checksums.db";
-    private readonly string logDir = "Logs";
+    private readonly string dbPath = "data/checksums.db";
+    private readonly string targetFolder;
 
-    public ScanService()
+    public ScanService(string scanPath)
     {
-        Directory.CreateDirectory("Data");
-        Directory.CreateDirectory("Logs");
-        InitDb();
-        CleanupOldLogs();
+        targetFolder = scanPath;
+        Directory.CreateDirectory("data");
+
+        // Initialize SQLite DB if not exists
+        using var conn = new SqliteConnection($"Data Source={dbPath}");
+        conn.Open();
+        conn.Execute(@"
+            CREATE TABLE IF NOT EXISTS Files(
+                Path TEXT PRIMARY KEY,
+                Hash TEXT,
+                Size INTEGER,
+                LastModified TEXT
+            );
+        ");
     }
 
-    public void RunScan(StateService state)
+    public void RunChecksumScan(CancellationToken token, string logFile)
     {
-        // create new log for this run
-        var logFile = $"{logDir}/scan_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.log";
-        state.ActiveLogFile = logFile;
+        var files = Directory.GetFiles(targetFolder, "*.*", SearchOption.AllDirectories);
 
         using var conn = new SqliteConnection($"Data Source={dbPath}");
         conn.Open();
 
-        var files = Directory.GetFiles(state.TargetPath, "*.*", SearchOption.AllDirectories);
-
-        Log(logFile, $"RUN {DateTime.Now} | FILES: {files.Length}");
-
         foreach (var file in files)
         {
-            if (!state.Running) break; // allow STOP button to interrupt
+            if (token.IsCancellationRequested) break;
 
             try
             {
@@ -38,12 +42,9 @@ public class ScanService
                 var lastWrite = info.LastWriteTimeUtc;
                 var size = info.Length;
 
-                var existing = conn.Query<FileRecord>("SELECT * FROM Files WHERE Path = @p", new { p = file }).FirstOrDefault();
+                var existing = conn.QueryFirstOrDefault<FileRecord>(
+                    "SELECT * FROM Files WHERE Path=@p", new { p = file });
 
-                if (existing != null && existing.LastModified == lastWrite && existing.Size == size)
-                    continue;
-
-                // file changed or new -> hash now
                 var hash = ComputeSHA256(file);
 
                 if (existing == null)
@@ -69,22 +70,7 @@ public class ScanService
             }
         }
 
-        Log(logFile, $"FINISHED {DateTime.Now}");
-        state.Running = false;
-    }
-
-    private void InitDb()
-    {
-        using var conn = new SqliteConnection($"Data Source={dbPath}");
-        conn.Open();
-        conn.Execute(@"
-            CREATE TABLE IF NOT EXISTS Files(
-                Path TEXT PRIMARY KEY,
-                Hash TEXT,
-                Size INTEGER,
-                LastModified TEXT
-            );
-        ");
+        Log(logFile, $"=== SCAN COMPLETED {DateTime.Now} ===");
     }
 
     private string ComputeSHA256(string file)
@@ -94,16 +80,8 @@ public class ScanService
         return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "");
     }
 
-    private void CleanupOldLogs()
+    private void Log(string logFile, string message)
     {
-        var files = Directory.GetFiles(logDir, "*.log");
-        foreach (var f in files)
-            if (File.GetCreationTime(f) < DateTime.Now.AddDays(-30))
-                File.Delete(f);
-    }
-
-    private void Log(string file, string text)
-    {
-        File.AppendAllText(file, text + "\n");
+        File.AppendAllText(logFile, message + "\n");
     }
 }

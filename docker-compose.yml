@@ -1,14 +1,14 @@
 version: "3.9"
 services:
-  integrity-checker:
-    build: ./src/FileIntegrityService
-    container_name: integrity-checker
-    environment:
-      - SCAN_PATH=/scan
-    volumes:
-      - /mnt/yourdrive:/scan
-      - ./config:/config
-      - ./data:/data
-      - ./logs:/logs
+  media-checker:
+    build: .
+    container_name: media-integrity-checker
     ports:
       - "5000:5000"
+    volumes:
+      - /mnt/host_media:/scan      # Host folder with your media
+      - /mnt/host_data:/data       # Database storage
+      - /mnt/host_logs:/logs       # Log storage
+    environment:
+      - ScanDirectory=/scan
+    restart: unless-stopped
