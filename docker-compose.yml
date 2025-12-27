@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  integrity-checker:
+    build: ./src/FileIntegrityService
+    container_name: integrity-checker
+    environment:
+      - SCAN_PATH=/scan
+    volumes:
+      - /mnt/yourdrive:/scan
+      - ./config:/config
+      - ./data:/data
+      - ./logs:/logs
+    ports:
+      - "8080:8080"
