@@ -39,7 +39,7 @@
 
 1. **Clone repository:**
     ```bash
-    git clone https://github.com/yourusername/MediaIntegrityCheckerV2.git
+    git clone https://github.com/matanmaron/MediaIntegrityCheckerV2.git
     cd MediaIntegrityCheckerV2
     ```
 
@@ -98,6 +98,7 @@
 
 ## File Structure
 
+ ```
 MediaIntegrityCheckerV2/
 ├─ data/ # Checksum database
 ├─ logs/ # Scan logs
@@ -106,7 +107,7 @@ MediaIntegrityCheckerV2/
 ├─ ScanService.cs # Checksum scanning logic
 ├─ Dockerfile # Docker build instructions
 └─ README.md
-
+ ```
 
 ---
 
