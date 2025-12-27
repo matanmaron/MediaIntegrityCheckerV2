@@ -8,5 +8,5 @@ WORKDIR /app
 COPY --from=build /app .
 ENV SCAN_PATH=/scan
 VOLUME ["/scan","/config","/data","/logs"]
-EXPOSE 8080
+EXPOSE 5000
 ENTRYPOINT ["dotnet","FileIntegrityService.dll"]
