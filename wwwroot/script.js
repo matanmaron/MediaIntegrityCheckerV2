@@ -49,16 +49,27 @@ function renderLog(text) {
     logBox.innerHTML = "";
 
     for (let line of lines) {
-        let span = document.createElement("span");
+        // Skip OK lines
+        if (line.startsWith("[OK]")) continue;
 
-        if (line.startsWith("[NEW]")) span.className = "green";
-        else if (line.startsWith("[LOCK]")) span.className = "yellow";
-        else if (line.startsWith("[BAD]")) span.className = "red";
-        else span.className = "";
+        // Check if line already contains HTML (summary line)
+        if (line.includes("<span")) {
+            const span = document.createElement("span");
+            span.innerHTML = line + "<br>";
+            logBox.appendChild(span);
+        } else {
+            // Normal log line: use class for color
+            const span = document.createElement("span");
+            if (line.startsWith("[NEW]")) span.className = "green";
+            else if (line.startsWith("[LOCK]")) span.className = "yellow";
+            else if (line.startsWith("[BAD]")) span.className = "red";
+            else span.className = ""; // any other text
 
-        span.textContent = line + "\n";
-        logBox.appendChild(span);
+            span.textContent = line + "\n"; // keep plain text safe
+            logBox.appendChild(span);
+        }
     }
 
     logBox.scrollTop = logBox.scrollHeight;
 }
+

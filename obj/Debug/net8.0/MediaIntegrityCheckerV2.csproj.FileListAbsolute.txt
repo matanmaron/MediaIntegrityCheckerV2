@@ -57,3 +57,4 @@
 /home/matanmaron/RiderProjects/MediaIntegrityCheckerV2/obj/Debug/net8.0/MediaIntegrityCheckerV2.pdb
 /home/matanmaron/RiderProjects/MediaIntegrityCheckerV2/obj/Debug/net8.0/MediaIntegrityCheckerV2.genruntimeconfig.cache
 /home/matanmaron/RiderProjects/MediaIntegrityCheckerV2/obj/Debug/net8.0/ref/MediaIntegrityCheckerV2.dll
+/home/matanmaron/RiderProjects/MediaIntegrityCheckerV2/bin/Debug/net8.0/MediaIntegrityCheckerV2.staticwebassets.runtime.json

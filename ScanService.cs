@@ -1,87 +1,101 @@
-using Microsoft.Data.Sqlite;
-using Dapper;
+using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
 
 public class ScanService
 {
-    private readonly string dbPath = "data/checksums.db";
-    private readonly string targetFolder;
+    private readonly string _scanPath;
 
     public ScanService(string scanPath)
     {
-        targetFolder = scanPath;
-        Directory.CreateDirectory("data");
-
-        // Initialize SQLite DB if not exists
-        using var conn = new SqliteConnection($"Data Source={dbPath}");
-        conn.Open();
-        conn.Execute(@"
-            CREATE TABLE IF NOT EXISTS Files(
-                Path TEXT PRIMARY KEY,
-                Hash TEXT,
-                Size INTEGER,
-                LastModified TEXT
-            );
-        ");
+        _scanPath = scanPath;
     }
 
-    public void RunChecksumScan(CancellationToken token, string logFile)
+    public async Task RunChecksumScan(CancellationToken token, string logFile)
     {
-        var files = Directory.GetFiles(targetFolder, "*.*", SearchOption.AllDirectories);
+        var startTime = DateTime.Now;
+        int newCount = 0, skippedCount = 0, badCount = 0, okCount = 0, totalCount = 0;
 
-        using var conn = new SqliteConnection($"Data Source={dbPath}");
-        conn.Open();
+        // Ensure log folder exists
+        Directory.CreateDirectory(Path.GetDirectoryName(logFile));
 
-        foreach (var file in files)
+        // Load existing checksums
+        var dbFile = Path.Combine("data", "checksums.db");
+        Directory.CreateDirectory("data");
+        var checksums = new Dictionary<string, string>();
+        if (File.Exists(dbFile))
         {
-            if (token.IsCancellationRequested) break;
-
-            try
+            foreach (var line in File.ReadAllLines(dbFile))
             {
-                var info = new FileInfo(file);
-                var lastWrite = info.LastWriteTimeUtc;
-                var size = info.Length;
-
-                var existing = conn.QueryFirstOrDefault<FileRecord>(
-                    "SELECT * FROM Files WHERE Path=@p", new { p = file });
-
-                var hash = ComputeSHA256(file);
-
-                if (existing == null)
-                {
-                    conn.Execute("INSERT INTO Files(Path,Hash,Size,LastModified) VALUES(@Path,@Hash,@Size,@LastModified)",
-                        new { Path = file, Hash = hash, Size = size, LastModified = lastWrite });
-                    Log(logFile, $"[NEW] {file}");
-                }
-                else
-                {
-                    if (existing.Hash != hash)
-                        Log(logFile, $"[BAD] {file}");
-                    else
-                        Log(logFile, $"[OK ] {file}");
-
-                    conn.Execute("UPDATE Files SET Hash=@Hash, Size=@Size, LastModified=@LastModified WHERE Path=@Path",
-                        new { Path = file, Hash = hash, Size = size, LastModified = lastWrite });
-                }
-            }
-            catch
-            {
-                Log(logFile, $"[LOCK] {file}");
+                var parts = line.Split('|');
+                if (parts.Length == 2) checksums[parts[0]] = parts[1];
             }
         }
 
-        Log(logFile, $"=== SCAN COMPLETED {DateTime.Now} ===");
+        var files = Directory.GetFiles(_scanPath, "*.*", SearchOption.AllDirectories);
+        foreach (var file in files)
+        {
+            totalCount++;
+            string name = Path.GetFileName(file);
+
+            // Skip system / shortcut / thumbs files
+            if (name.StartsWith("~") || name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase)) 
+                continue;
+
+            try
+            {
+                byte[] data = File.ReadAllBytes(file);
+                string hash = ComputeHash(data);
+
+                if (!checksums.TryGetValue(file, out var existing))
+                {
+                    checksums[file] = hash;
+                    File.AppendAllText(dbFile, $"{file}|{hash}{Environment.NewLine}");
+                    LogLine(logFile, $"[NEW] {file}", "green");
+                    newCount++;
+                }
+                else if (existing != hash)
+                {
+                    checksums[file] = hash;
+                    File.AppendAllText(dbFile, $"{file}|{hash}{Environment.NewLine}");
+                    LogLine(logFile, $"[BAD] {file}", "red");
+                    badCount++;
+                }
+                else
+                {
+                    LogLine(logFile, $"[OK] {file}", "white");
+                    okCount++;
+                }
+            }
+            catch (IOException)
+            {
+                LogLine(logFile, $"[LOCK] {file}", "yellow");
+                skippedCount++;
+            }
+
+            if (token.IsCancellationRequested) break;
+        }
+
+        var duration = DateTime.Now - startTime;
+        var summaryLine = $"Finished scan in {duration.TotalSeconds:N1}s: " +
+                          $"<span class='green'>{newCount}</span>/" +
+                          $"<span class='yellow'>{skippedCount}</span>/" +
+                          $"<span class='red'>{badCount}</span> found in {totalCount} files";
+
+        LogLine(logFile, summaryLine, "white");
     }
 
-    private string ComputeSHA256(string file)
+    private void LogLine(string logFile, string line, string color)
+    {
+        File.AppendAllText(logFile, line + Environment.NewLine);
+    }
+
+    private string ComputeHash(byte[] data)
     {
         using var sha = SHA256.Create();
-        using var stream = File.OpenRead(file);
-        return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "");
-    }
-
-    private void Log(string logFile, string message)
-    {
-        File.AppendAllText(logFile, message + "\n");
+        return Convert.ToHexString(sha.ComputeHash(data));
     }
 }

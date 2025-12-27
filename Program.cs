@@ -3,20 +3,15 @@ using Dapper;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Read scan path from config / Docker env
-var scanPath = builder.Configuration.GetValue<string>("ScanDirectory");
-if (string.IsNullOrWhiteSpace(scanPath) || !Directory.Exists(scanPath))
-{
-    throw new Exception($"Configured scan path does not exist: {scanPath}. Fix the Docker volume mapping.");
-}
+// Scan path is fixed inside container
+var scanPath = "/scan";
 
-// Create services
 builder.Services.AddSingleton<ScanState>();
 builder.Services.AddSingleton(new ScanService(scanPath));
 
 var app = builder.Build();
 
-// Serve static UI files
+// Serve UI
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -35,7 +30,15 @@ app.MapPost("/scan/start", (ScanService scanner, ScanState state) =>
     state.IsRunning = true;
     state.TokenSource = new CancellationTokenSource();
 
-    _ = Task.Run(() => scanner.RunChecksumScan(state.TokenSource.Token, state.LogFile));
+    // Run scan in background
+    _ = Task.Run(async () =>
+    {
+        await scanner.RunChecksumScan(state.TokenSource.Token, state.LogFile);
+
+        // Scan finished, reset button
+        state.IsRunning = false;
+        File.AppendAllText(state.LogFile, $"\n=== SCAN FINISHED {DateTime.Now} ===\n");
+    });
 
     return Results.Ok("Scan started");
 });
@@ -45,12 +48,10 @@ app.MapPost("/scan/stop", (ScanState state) =>
 {
     if (!state.IsRunning) return Results.BadRequest("No scan running.");
     state.TokenSource.Cancel();
-    state.IsRunning = false;
-    File.AppendAllText(state.LogFile, "\n=== SCAN STOPPED ===\n");
     return Results.Ok("Scan stopping...");
 });
 
-// STATE for UI
+// STATE for UI (START/STOP button)
 app.MapGet("/state", (ScanState state) =>
 {
     return Results.Json(new { running = state.IsRunning, logfile = state.LogFile });
