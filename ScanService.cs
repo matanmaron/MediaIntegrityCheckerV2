@@ -19,7 +19,6 @@ public class ScanService
         var startTime = DateTime.Now;
         int newCount = 0, skippedCount = 0, badCount = 0, okCount = 0, totalCount = 0;
 
-        // Ensure log folder exists
         Directory.CreateDirectory(Path.GetDirectoryName(logFile));
 
         // Load existing checksums
@@ -35,62 +34,110 @@ public class ScanService
             }
         }
 
-        var files = Directory.GetFiles(_scanPath, "*.*", SearchOption.AllDirectories);
-        foreach (var file in files)
+        try
         {
-            totalCount++;
-            string name = Path.GetFileName(file);
-
-            // Skip system / shortcut / thumbs files
-            if (name.StartsWith("~") || name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase)) 
-                continue;
-
-            try
+            foreach (var file in SafeEnumerateFiles(_scanPath, "*.*", SearchOption.AllDirectories))
             {
-                byte[] data = File.ReadAllBytes(file);
-                string hash = ComputeHash(data);
+                if (token.IsCancellationRequested) break;
 
-                if (!checksums.TryGetValue(file, out var existing))
+                totalCount++;
+                string name = Path.GetFileName(file);
+
+                // Skip system / shortcut / thumbs files
+                if (name.StartsWith("~") || name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                try
                 {
-                    checksums[file] = hash;
-                    File.AppendAllText(dbFile, $"{file}|{hash}{Environment.NewLine}");
-                    LogLine(logFile, $"[NEW] {file}", "green");
-                    newCount++;
+                    byte[] data = File.ReadAllBytes(file);
+                    string hash = ComputeHash(data);
+
+                    if (!checksums.TryGetValue(file, out var existing))
+                    {
+                        checksums[file] = hash;
+                        File.AppendAllText(dbFile, $"{file}|{hash}{Environment.NewLine}");
+                        LogLine(logFile, $"[NEW] {file}", "green");
+                        newCount++;
+                    }
+                    else if (existing != hash)
+                    {
+                        checksums[file] = hash;
+                        File.AppendAllText(dbFile, $"{file}|{hash}{Environment.NewLine}");
+                        LogLine(logFile, $"[BAD] {file}", "red");
+                        badCount++;
+                    }
+                    else
+                    {
+                        LogLine(logFile, $"[OK] {file}", "white");
+                        okCount++;
+                    }
                 }
-                else if (existing != hash)
+                catch (UnauthorizedAccessException)
                 {
-                    checksums[file] = hash;
-                    File.AppendAllText(dbFile, $"{file}|{hash}{Environment.NewLine}");
-                    LogLine(logFile, $"[BAD] {file}", "red");
-                    badCount++;
+                    LogLine(logFile, $"[LOCK] {file} (access denied)", "yellow");
+                    skippedCount++;
                 }
-                else
+                catch (IOException ioEx)
                 {
-                    LogLine(logFile, $"[OK] {file}", "white");
-                    okCount++;
+                    LogLine(logFile, $"[LOCK] {file} ({ioEx.Message})", "yellow");
+                    skippedCount++;
+                }
+                catch (Exception ex)
+                {
+                    LogLine(logFile, $"[ERROR] {file} ({ex.GetType().Name}: {ex.Message})", "red");
+                    skippedCount++;
                 }
             }
-            catch (IOException)
-            {
-                LogLine(logFile, $"[LOCK] {file}", "yellow");
-                skippedCount++;
-            }
-
-            if (token.IsCancellationRequested) break;
         }
+        catch (Exception ex)
+        {
+            // Only unexpected errors
+            LogLine(logFile, $"[ERROR] Scan failed: {ex.GetType().Name} - {ex.Message}", "red");
+        }
+        finally
+        {
+            var duration = DateTime.Now - startTime;
+            var summaryLine = $"Finished scan in {duration.TotalSeconds:N1}s: " +
+                              $"<span class='green'>{newCount}</span>/" +
+                              $"<span class='yellow'>{skippedCount}</span>/" +
+                              $"<span class='red'>{badCount}</span> found in {totalCount} files";
 
-        var duration = DateTime.Now - startTime;
-        var summaryLine = $"Finished scan in {duration.TotalSeconds:N1}s: " +
-                          $"<span class='green'>{newCount}</span>/" +
-                          $"<span class='yellow'>{skippedCount}</span>/" +
-                          $"<span class='red'>{badCount}</span> found in {totalCount} files";
+            LogLine(logFile, summaryLine, "white");
+        }
+    }
 
-        LogLine(logFile, summaryLine, "white");
+    private IEnumerable<string> SafeEnumerateFiles(string path, string searchPattern, SearchOption option)
+    {
+        var dirs = new Stack<string>();
+        dirs.Push(path);
+
+        while (dirs.Count > 0)
+        {
+            var currentDir = dirs.Pop();
+            IEnumerable<string> subDirs = new List<string>();
+
+            // Get files
+            string[] files = Array.Empty<string>();
+            try { files = Directory.GetFiles(currentDir, searchPattern); } 
+            catch { /* skip inaccessible directories */ }
+            foreach (var file in files) yield return file;
+
+            // Get subdirectories
+            try { subDirs = Directory.GetDirectories(currentDir); } catch { continue; }
+            foreach (var dir in subDirs)
+            {
+                // Skip system folders like "System Volume Information" or hidden
+                var dirName = Path.GetFileName(dir);
+                if (dirName.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase)) continue;
+                dirs.Push(dir);
+            }
+        }
     }
 
     private void LogLine(string logFile, string line, string color)
     {
-        File.AppendAllText(logFile, line + Environment.NewLine);
+        try { File.AppendAllText(logFile, line + Environment.NewLine); }
+        catch { /* ignore logging failures */ }
     }
 
     private string ComputeHash(byte[] data)

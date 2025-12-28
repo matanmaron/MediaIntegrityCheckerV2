@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MediaIntegrityCheckerV2")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9d1a9a59a90960297a5f8f296b386630fa14b47d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+aa45fef7285fd9b3fcca3bf2691841a12d5d3a7a")]
 [assembly: System.Reflection.AssemblyProductAttribute("MediaIntegrityCheckerV2")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MediaIntegrityCheckerV2")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
